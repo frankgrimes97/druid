@@ -53,13 +53,19 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
+import org.apache.druid.query.Druids;
+import org.apache.druid.query.aggregation.datasketches.tuple.ArrayOfDoublesSketchSetOpPostAggregator;
+import org.apache.druid.segment.virtual.ExpressionVirtualColumn;
 
 public class ArrayOfDoublesSketchSqlAggregatorTest extends BaseCalciteQueryTest
 {
 
   private static final String DATA_SOURCE = "foo";
 
-  public static final List<InputRow> ROWS = ImmutableList.of(
+  // built from ArrayOfDoublesUpdatableSketch.update("FEDCAB", new double[] {0.0}).compact()
+  private static final String COMPACT_BASE_64_ENCODED_SKETCH_FOR_INTERSECTION = "AQEJAwgBzJP/////////fwEAAAAAAAAAjFnadZuMrkgAAAAAAAAAAA==";
+
+  private static final List<InputRow> ROWS = ImmutableList.of(
       ImmutableMap.<String, Object>builder()
                   .put("t", "2000-01-01")
                   .put("dim1", "CA")
@@ -199,6 +205,90 @@ public class ArrayOfDoublesSketchSqlAggregatorTest extends BaseCalciteQueryTest
                       )
                   )
                   .setContext(QUERY_CONTEXT_DEFAULT)
+                  .build()
+        ),
+        expectedResults
+    );
+  }
+
+  @Test
+  public void testMetricsSumEstimateIntersect()
+  {
+    cannotVectorize();
+
+    final String sql = "SELECT\n"
+                   + "  SUM(cnt),\n"
+                   + "  ARRAY_OF_DOUBLES_SKETCH_METRICS_SUM_ESTIMATE(ARRAY_OF_DOUBLES_SKETCH(tuplesketch_dim2)) AS all_sum_estimates,\n"
+                   + String.format(
+                         "ARRAY_OF_DOUBLES_SKETCH_METRICS_SUM_ESTIMATE(ARRAY_OF_DOUBLES_SKETCH_INTERSECT(ARRAY_OF_DOUBLES_SKETCH('%s'), ARRAY_OF_DOUBLES_SKETCH(tuplesketch_dim2))) AS intersect_sum_estimates\n", COMPACT_BASE_64_ENCODED_SKETCH_FOR_INTERSECTION)
+                   + "FROM druid.foo";
+
+    final List<Object[]> expectedResults;
+
+    expectedResults = ImmutableList.of(
+        new Object[]{
+            5L,
+            "[30.0]",
+            "[8.0]"
+        }
+    );
+
+    testQuery(
+        sql,
+        ImmutableList.of(
+            Druids.newTimeseriesQueryBuilder()
+                  .dataSource(CalciteTests.DATASOURCE1)
+                  .intervals(querySegmentSpec(Filtration.eternity()))
+                  .granularity(Granularities.ALL)
+                  .virtualColumns(
+                      new ExpressionVirtualColumn(
+                          "v0",
+                          "'" + COMPACT_BASE_64_ENCODED_SKETCH_FOR_INTERSECTION.replace("=", "\\u003D") + "'",
+                          ColumnType.STRING,
+                          queryFramework().macroTable()
+                      )
+                  )
+                  .aggregators(
+                      ImmutableList.of(
+                          new LongSumAggregatorFactory("a0", "cnt"),
+                          new ArrayOfDoublesSketchAggregatorFactory(
+                                                             "a1",
+                                                             "tuplesketch_dim2",
+                                                             null,
+                                                             null,
+                                                             null
+                          ),
+                          new ArrayOfDoublesSketchAggregatorFactory(
+                                                             "a2",
+                                                             "v0",
+                                                             null,
+                                                             null,
+                                                             null
+                          )
+                      )
+                  )
+                  .postAggregators(
+                      ImmutableList.of(
+                         new ArrayOfDoublesSketchToMetricsSumEstimatePostAggregator(
+                           "p1",
+                           new FieldAccessPostAggregator("p0", "a1")
+                         ),
+                         new ArrayOfDoublesSketchToMetricsSumEstimatePostAggregator(
+                           "p5",
+                           new ArrayOfDoublesSketchSetOpPostAggregator(
+                             "p4",
+                             "INTERSECT",
+                             null,
+                             null,
+                             ImmutableList.of(
+                               new FieldAccessPostAggregator("p2", "a2"),
+                               new FieldAccessPostAggregator("p3", "a1")
+                             )
+                           )
+                         )
+                      )
+                  )
+                  .context(QUERY_CONTEXT_DEFAULT)
                   .build()
         ),
         expectedResults
