@@ -29,3 +29,8 @@ integration-tests/gen-scripts/
 /bin/
 *.hprof
 **/.ipynb_checkpoints/
+
+# ignore NetBeans IDE specific files
+nbproject
+nbactions.xml
+nb-configuration.xml
