@@ -64,12 +64,10 @@ public class ArrayOfDoublesSketchMergeAggregator implements Aggregator
     }
     final ArrayOfDoublesSketch sketch;
     if (update instanceof ArrayOfDoublesSketch) {
-      sketch = (ArrayOfDoublesSketch)update;
-    }
-    else if (update instanceof String) {
-      sketch = ArrayOfDoublesSketchOperations.deserializeFromBase64EncodedStringSafe((String)update);
-    }
-    else {
+      sketch = (ArrayOfDoublesSketch) update;
+    } else if (update instanceof String) {
+      sketch = ArrayOfDoublesSketchOperations.deserializeFromBase64EncodedStringSafe((String) update);
+    } else {
       sketch = null;
     }
     synchronized (this) {

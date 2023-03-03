@@ -19,7 +19,6 @@
 
 package org.apache.druid.query.aggregation.datasketches.tuple.sql;
 
-import java.util.ArrayList;
 import org.apache.calcite.rel.core.AggregateCall;
 import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.type.RelDataType;
@@ -49,6 +48,7 @@ import org.apache.druid.sql.calcite.planner.PlannerContext;
 import org.apache.druid.sql.calcite.rel.VirtualColumnRegistry;
 
 import javax.annotation.Nullable;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -106,24 +106,24 @@ public class ArrayOfDoublesSketchSqlAggregator implements SqlAggregator
       final String fieldName;
 
       final RexNode columnRexNode = Expressions.fromFieldAccess(
-        rowSignature,
-        project,
-        argList.get(i)
+          rowSignature,
+          project,
+          argList.get(i)
       );
 
       final DruidExpression columnArg = Expressions.toDruidExpression(
-        plannerContext,
-        rowSignature,
-        columnRexNode
+          plannerContext,
+          rowSignature,
+          columnRexNode
       );
       if (columnArg == null) {
         return null;
       }
 
-      if (columnArg.isDirectColumnAccess()
-        && rowSignature.getColumnType(columnArg.getDirectColumn())
-                       .map(type -> type.is(ValueType.COMPLEX))
-                       .orElse(false)) {
+      if (columnArg.isDirectColumnAccess() &&
+          rowSignature.getColumnType(columnArg.getDirectColumn())
+                      .map(type -> type.is(ValueType.COMPLEX))
+                      .orElse(false)) {
         fieldName = columnArg.getDirectColumn();
       } else {
         final RelDataType dataType = columnRexNode.getType();

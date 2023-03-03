@@ -24,12 +24,15 @@ import com.google.common.collect.ImmutableMap;
 import com.google.inject.Injector;
 import org.apache.druid.data.input.InputRow;
 import org.apache.druid.guice.DruidInjectorBuilder;
+import org.apache.druid.java.util.common.StringUtils;
 import org.apache.druid.java.util.common.granularity.Granularities;
+import org.apache.druid.query.Druids;
 import org.apache.druid.query.QueryRunnerFactoryConglomerate;
 import org.apache.druid.query.aggregation.CountAggregatorFactory;
 import org.apache.druid.query.aggregation.LongSumAggregatorFactory;
 import org.apache.druid.query.aggregation.datasketches.tuple.ArrayOfDoublesSketchAggregatorFactory;
 import org.apache.druid.query.aggregation.datasketches.tuple.ArrayOfDoublesSketchModule;
+import org.apache.druid.query.aggregation.datasketches.tuple.ArrayOfDoublesSketchSetOpPostAggregator;
 import org.apache.druid.query.aggregation.datasketches.tuple.ArrayOfDoublesSketchToMetricsSumEstimatePostAggregator;
 import org.apache.druid.query.aggregation.post.FieldAccessPostAggregator;
 import org.apache.druid.query.dimension.DefaultDimensionSpec;
@@ -39,6 +42,7 @@ import org.apache.druid.segment.QueryableIndex;
 import org.apache.druid.segment.column.ColumnType;
 import org.apache.druid.segment.incremental.IncrementalIndexSchema;
 import org.apache.druid.segment.join.JoinableFactoryWrapper;
+import org.apache.druid.segment.virtual.ExpressionVirtualColumn;
 import org.apache.druid.segment.writeout.OffHeapMemorySegmentWriteOutMediumFactory;
 import org.apache.druid.sql.calcite.BaseCalciteQueryTest;
 import org.apache.druid.sql.calcite.filtration.Filtration;
@@ -53,9 +57,6 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
-import org.apache.druid.query.Druids;
-import org.apache.druid.query.aggregation.datasketches.tuple.ArrayOfDoublesSketchSetOpPostAggregator;
-import org.apache.druid.segment.virtual.ExpressionVirtualColumn;
 
 public class ArrayOfDoublesSketchSqlAggregatorTest extends BaseCalciteQueryTest
 {
@@ -248,8 +249,11 @@ public class ArrayOfDoublesSketchSqlAggregatorTest extends BaseCalciteQueryTest
     final String sql = "SELECT\n"
                    + "  SUM(cnt),\n"
                    + "  ARRAY_OF_DOUBLES_SKETCH_METRICS_SUM_ESTIMATE(ARRAY_OF_DOUBLES_SKETCH(tuplesketch_dim2)) AS all_sum_estimates,\n"
-                   + String.format(
-                         "ARRAY_OF_DOUBLES_SKETCH_METRICS_SUM_ESTIMATE(ARRAY_OF_DOUBLES_SKETCH_INTERSECT(ARRAY_OF_DOUBLES_SKETCH('%s'), ARRAY_OF_DOUBLES_SKETCH(tuplesketch_dim2))) AS intersect_sum_estimates\n", COMPACT_BASE_64_ENCODED_SKETCH_FOR_INTERSECTION)
+                   + StringUtils.replace(
+                      "ARRAY_OF_DOUBLES_SKETCH_METRICS_SUM_ESTIMATE(ARRAY_OF_DOUBLES_SKETCH_INTERSECT(ARRAY_OF_DOUBLES_SKETCH('%s'), ARRAY_OF_DOUBLES_SKETCH(tuplesketch_dim2))) AS intersect_sum_estimates\n",
+                      "%s",
+                      COMPACT_BASE_64_ENCODED_SKETCH_FOR_INTERSECTION
+                   )
                    + "FROM druid.foo";
 
     final List<Object[]> expectedResults;
@@ -272,7 +276,7 @@ public class ArrayOfDoublesSketchSqlAggregatorTest extends BaseCalciteQueryTest
                   .virtualColumns(
                       new ExpressionVirtualColumn(
                           "v0",
-                          "'" + COMPACT_BASE_64_ENCODED_SKETCH_FOR_INTERSECTION.replace("=", "\\u003D") + "'",
+                          "'" + StringUtils.replace(COMPACT_BASE_64_ENCODED_SKETCH_FOR_INTERSECTION, "=", "\\u003D") + "'",
                           ColumnType.STRING,
                           queryFramework().macroTable()
                       )
