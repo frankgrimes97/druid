@@ -19,6 +19,7 @@
 
 package org.apache.druid.query.aggregation.datasketches.tuple.sql;
 
+import java.util.ArrayList;
 import org.apache.calcite.rel.core.AggregateCall;
 import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.type.RelDataType;
@@ -30,7 +31,6 @@ import org.apache.calcite.sql.SqlFunctionCategory;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.type.InferTypes;
 import org.apache.calcite.sql.type.OperandTypes;
-import org.apache.calcite.sql.type.SqlTypeFamily;
 import org.apache.datasketches.Util;
 import org.apache.druid.java.util.common.ISE;
 import org.apache.druid.query.aggregation.AggregatorFactory;
@@ -78,82 +78,90 @@ public class ArrayOfDoublesSketchSqlAggregator implements SqlAggregator
       boolean finalizeAggregations
   )
   {
-    // Don't use Aggregations.getArgumentsForSimpleAggregator, since it won't let us use direct column access
-    // for string columns.
-    final RexNode columnRexNode = Expressions.fromFieldAccess(
+
+    final List<Integer> argList = aggregateCall.getArgList();
+
+    // check last argument for nomimalEntries
+    final int nominalEntries;
+    final int metricExpressionEndIndex;
+    final int lastArgIndex = argList.size() - 1;
+    final RexNode potentialNominalEntriesArg = Expressions.fromFieldAccess(
         rowSignature,
         project,
-        aggregateCall.getArgList().get(0)
+        argList.get(lastArgIndex)
     );
 
-    final DruidExpression columnArg = Expressions.toDruidExpression(plannerContext, rowSignature, columnRexNode);
-    if (columnArg == null) {
-      return null;
+    if (potentialNominalEntriesArg.isA(SqlKind.LITERAL) &&
+        RexLiteral.value(potentialNominalEntriesArg) instanceof Number) {
+
+      nominalEntries = ((Number) RexLiteral.value(potentialNominalEntriesArg)).intValue();
+      metricExpressionEndIndex = lastArgIndex - 1;
+    } else {
+      nominalEntries = Util.DEFAULT_NOMINAL_ENTRIES;
+      metricExpressionEndIndex = lastArgIndex;
     }
 
-    final int nominalEntries;
-    if (aggregateCall.getArgList().size() >= 2) {
-      final RexNode nominalEntriesArg = Expressions.fromFieldAccess(
-          rowSignature,
-          project,
-          aggregateCall.getArgList().get(1)
+    final List<String> fieldNames = new ArrayList<>();
+    for (int i = 0; i <= metricExpressionEndIndex; i++) {
+      final String fieldName;
+
+      final RexNode columnRexNode = Expressions.fromFieldAccess(
+        rowSignature,
+        project,
+        argList.get(i)
       );
 
-      if (!nominalEntriesArg.isA(SqlKind.LITERAL)) {
-        // logK must be a literal in order to plan.
+      final DruidExpression columnArg = Expressions.toDruidExpression(
+        plannerContext,
+        rowSignature,
+        columnRexNode
+      );
+      if (columnArg == null) {
         return null;
       }
 
-      nominalEntries = ((Number) RexLiteral.value(nominalEntriesArg)).intValue();
-    } else {
-      nominalEntries = Util.DEFAULT_NOMINAL_ENTRIES;
-    }
-
-    final AggregatorFactory aggregatorFactory;
-    final String aggregatorName = finalizeAggregations ? Calcites.makePrefixedName(name, "a") : name;
-
-    if (columnArg.isDirectColumnAccess()
+      if (columnArg.isDirectColumnAccess()
         && rowSignature.getColumnType(columnArg.getDirectColumn())
                        .map(type -> type.is(ValueType.COMPLEX))
                        .orElse(false)) {
-      aggregatorFactory = new ArrayOfDoublesSketchAggregatorFactory(
-          aggregatorName,
-          columnArg.getDirectColumn(),
-          nominalEntries,
-          null,
-          null
-      );
-    } else {
-      final RelDataType dataType = columnRexNode.getType();
-      final ColumnType inputType = Calcites.getColumnTypeForRelDataType(dataType);
-      if (inputType == null) {
-        throw new ISE(
-            "Cannot translate sqlTypeName[%s] to Druid type for field[%s]",
-            dataType.getSqlTypeName(),
-            aggregatorName
-        );
-      }
-
-      final DimensionSpec dimensionSpec;
-
-      if (columnArg.isDirectColumnAccess()) {
-        dimensionSpec = columnArg.getSimpleExtraction().toDimensionSpec(null, inputType);
+        fieldName = columnArg.getDirectColumn();
       } else {
-        String virtualColumnName = virtualColumnRegistry.getOrCreateVirtualColumnForExpression(
-            columnArg,
-            dataType
-        );
-        dimensionSpec = new DefaultDimensionSpec(virtualColumnName, null, inputType);
+        final RelDataType dataType = columnRexNode.getType();
+        final ColumnType inputType = Calcites.getColumnTypeForRelDataType(dataType);
+        if (inputType == null) {
+          throw new ISE(
+              "Cannot translate sqlTypeName[%s] to Druid type for field[%s]",
+              dataType.getSqlTypeName(),
+              name
+          );
+        }
+
+        final DimensionSpec dimensionSpec;
+
+        if (columnArg.isDirectColumnAccess()) {
+          dimensionSpec = columnArg.getSimpleExtraction().toDimensionSpec(null, inputType);
+        } else {
+          String virtualColumnName = virtualColumnRegistry.getOrCreateVirtualColumnForExpression(
+              columnArg,
+              dataType
+          );
+          dimensionSpec = new DefaultDimensionSpec(virtualColumnName, null, inputType);
+        }
+        fieldName = dimensionSpec.getDimension();
       }
 
-      aggregatorFactory = new ArrayOfDoublesSketchAggregatorFactory(
-          aggregatorName,
-          dimensionSpec.getDimension(),
+      fieldNames.add(fieldName);
+    }
+
+    final AggregatorFactory aggregatorFactory;
+    final List<String> metricColumns = fieldNames.size() > 1 ? fieldNames.subList(1, fieldNames.size()) : null;
+    aggregatorFactory = new ArrayOfDoublesSketchAggregatorFactory(
+          name,
+          fieldNames.get(0), // first field is dimension
           nominalEntries,
-          null,
+          metricColumns,
           null
       );
-    }
 
     return Aggregation.create(
         Collections.singletonList(aggregatorFactory),
@@ -162,7 +170,7 @@ public class ArrayOfDoublesSketchSqlAggregator implements SqlAggregator
 
   private static class ArrayOfDoublesSqlAggFunction extends SqlAggFunction
   {
-    private static final String SIGNATURE = "'" + NAME + "(column, nominalEntries)'\n";
+    private static final String SIGNATURE = "'" + NAME + "(expr, nominalEntries)'\n";
 
     ArrayOfDoublesSqlAggFunction()
     {
@@ -172,13 +180,7 @@ public class ArrayOfDoublesSketchSqlAggregator implements SqlAggregator
           SqlKind.OTHER_FUNCTION,
           ArrayOfDoublesSketchSqlOperators.RETURN_TYPE_INFERENCE,
           InferTypes.VARCHAR_1024,
-          OperandTypes.or(
-              OperandTypes.ANY,
-              OperandTypes.and(
-                  OperandTypes.sequence(SIGNATURE, OperandTypes.ANY, OperandTypes.LITERAL),
-                  OperandTypes.family(SqlTypeFamily.ANY, SqlTypeFamily.NUMERIC)
-              )
-          ),
+          OperandTypes.VARIADIC,
           SqlFunctionCategory.USER_DEFINED_FUNCTION,
           false,
           false

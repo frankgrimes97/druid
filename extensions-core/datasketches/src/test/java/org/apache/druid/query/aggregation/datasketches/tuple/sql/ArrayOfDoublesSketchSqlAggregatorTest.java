@@ -70,31 +70,31 @@ public class ArrayOfDoublesSketchSqlAggregatorTest extends BaseCalciteQueryTest
                   .put("t", "2000-01-01")
                   .put("dim1", "CA")
                   .put("dim2", "FEDCAB")
-                  .put("m1", "5")
+                  .put("m1", 5)
                   .build(),
       ImmutableMap.<String, Object>builder()
                   .put("t", "2000-01-01")
                   .put("dim1", "US")
                   .put("dim2", "ABCDEF")
-                  .put("m1", "12")
+                  .put("m1", 12)
                   .build(),
       ImmutableMap.<String, Object>builder()
                   .put("t", "2000-01-02")
                   .put("dim1", "CA")
                   .put("dim2", "FEDCAB")
-                  .put("m1", "3")
+                  .put("m1", 3)
                   .build(),
       ImmutableMap.<String, Object>builder()
                   .put("t", "2000-01-02")
                   .put("dim1", "US")
                   .put("dim2", "ABCDEF")
-                  .put("m1", "8")
+                  .put("m1", 8)
                   .build(),
       ImmutableMap.<String, Object>builder()
                   .put("t", "2000-01-03")
                   .put("dim1", "US")
                   .put("dim2", "ABCDEF")
-                  .put("m1", "2")
+                  .put("m1", 2)
                   .build()
   ).stream().map(TestDataBuilder::createRow).collect(Collectors.toList());
 
@@ -129,7 +129,8 @@ public class ArrayOfDoublesSketchSqlAggregatorTest extends BaseCalciteQueryTest
                                                              null,
                                                              Arrays.asList("m1"),
                                                              1
-                                                         )
+                                                         ),
+                                                         new LongSumAggregatorFactory("m1", "m1")
                                                      )
                                                      .withRollup(false)
                                                      .build()
@@ -157,7 +158,9 @@ public class ArrayOfDoublesSketchSqlAggregatorTest extends BaseCalciteQueryTest
     final String sql = "SELECT\n"
                    + "  dim1,\n"
                    + "  SUM(cnt),\n"
-                   + "  ARRAY_OF_DOUBLES_SKETCH_METRICS_SUM_ESTIMATE(ARRAY_OF_DOUBLES_SKETCH(tuplesketch_dim2))\n"
+                   + "  ARRAY_OF_DOUBLES_SKETCH_METRICS_SUM_ESTIMATE(ARRAY_OF_DOUBLES_SKETCH(tuplesketch_dim2)),\n"
+                   + "  ARRAY_OF_DOUBLES_SKETCH_METRICS_SUM_ESTIMATE(ARRAY_OF_DOUBLES_SKETCH(dim2, m1)),\n"
+                   + "  ARRAY_OF_DOUBLES_SKETCH_METRICS_SUM_ESTIMATE(ARRAY_OF_DOUBLES_SKETCH(dim2, m1, 256))\n"
                    + "FROM druid.foo\n"
                    + "GROUP BY dim1";
 
@@ -167,11 +170,15 @@ public class ArrayOfDoublesSketchSqlAggregatorTest extends BaseCalciteQueryTest
         new Object[]{
             "CA",
             2L,
+            "[8.0]",
+            "[8.0]",
             "[8.0]"
         },
         new Object[]{
             "US",
             3L,
+            "[22.0]",
+            "[22.0]",
             "[22.0]"
         }
     );
@@ -193,6 +200,20 @@ public class ArrayOfDoublesSketchSqlAggregatorTest extends BaseCalciteQueryTest
                                                              null,
                                                              null,
                                                              null
+                          ),
+                          new ArrayOfDoublesSketchAggregatorFactory(
+                                                             "a2",
+                                                             "dim2",
+                                                             null,
+                                                             Arrays.asList("m1"),
+                                                             null
+                          ),
+                          new ArrayOfDoublesSketchAggregatorFactory(
+                                                             "a3",
+                                                             "dim2",
+                                                             256,
+                                                             Arrays.asList("m1"),
+                                                             null
                           )
                       )
                   )
@@ -201,6 +222,14 @@ public class ArrayOfDoublesSketchSqlAggregatorTest extends BaseCalciteQueryTest
                          new ArrayOfDoublesSketchToMetricsSumEstimatePostAggregator(
                            "p1",
                            new FieldAccessPostAggregator("p0", "a1")
+                         ),
+                         new ArrayOfDoublesSketchToMetricsSumEstimatePostAggregator(
+                           "p3",
+                           new FieldAccessPostAggregator("p2", "a2")
+                         ),
+                         new ArrayOfDoublesSketchToMetricsSumEstimatePostAggregator(
+                           "p5",
+                           new FieldAccessPostAggregator("p4", "a3")
                          )
                       )
                   )
